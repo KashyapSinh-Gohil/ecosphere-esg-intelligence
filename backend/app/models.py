@@ -211,5 +211,30 @@ class DepartmentScore(Base):
 
     department = relationship("Department", back_populates="scores")
 
+class OrganizationSetting(Base):
+    __tablename__ = "organization_settings"
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String, unique=True, index=True, nullable=False)
+    value = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class EmployeeBalance(Base):
+    __tablename__ = "employee_balances"
+
+    id = Column(Integer, primary_key=True)
+    employee_name = Column(String, unique=True, index=True, nullable=False)
+    xp_total = Column(Integer, default=0, nullable=False)
+    points_balance = Column(Integer, default=0, nullable=False)
+
+class RewardRedemption(Base):
+    __tablename__ = "reward_redemptions"
+
+    id = Column(Integer, primary_key=True)
+    employee_name = Column(String, index=True, nullable=False)
+    reward_id = Column(Integer, ForeignKey("rewards.id"), nullable=False)
+    points_spent = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
 def init_db():
     Base.metadata.create_all(bind=engine)

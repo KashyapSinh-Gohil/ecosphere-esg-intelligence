@@ -4,7 +4,7 @@ from datetime import datetime
 from ..models import (
     CarbonTransaction, EmissionFactor, EmployeeParticipation, 
     CSRActivity, Badge, Reward, ChallengeParticipation, Challenge,
-    ComplianceIssue, DepartmentScore, Department
+    ComplianceIssue, DepartmentScore, Department, EmployeeBalance, RewardRedemption
 )
 from calculators import scope1_direct, scope2_indirect, scope3_supply
 
@@ -87,22 +87,30 @@ def redeem_catalog_reward(db: Session, employee_name: str, reward_id: int) -> di
     if reward.status != "active" or reward.stock <= 0:
         raise ValueError("Reward is out of stock or inactive")
 
-    total_earned = db.query(EmployeeParticipation).filter(
-        EmployeeParticipation.employee_name == employee_name,
-        EmployeeParticipation.approval_status == "approved"
-    ).sum(EmployeeParticipation.points_earned) or 0
+    balance = db.query(EmployeeBalance).filter(EmployeeBalance.employee_name == employee_name).first()
+    if not balance:
+        earned = db.query(func.sum(EmployeeParticipation.points_earned)).filter(
+            EmployeeParticipation.employee_name == employee_name,
+            EmployeeParticipation.approval_status == "approved"
+        ).scalar() or 0
+        balance = EmployeeBalance(employee_name=employee_name, points_balance=int(earned), xp_total=int(earned) * 2)
+        db.add(balance)
+        db.flush()
 
-    if total_earned < reward.points_required:
-        raise ValueError(f"Insufficient points. Required: {reward.points_required}, Available: {total_earned}")
+    if balance.points_balance < reward.points_required:
+        raise ValueError(f"Insufficient points. Required: {reward.points_required}, Available: {balance.points_balance}")
 
     reward.stock -= 1
+    balance.points_balance -= reward.points_required
+    db.add(RewardRedemption(employee_name=employee_name, reward_id=reward.id, points_spent=reward.points_required))
     db.commit()
     db.refresh(reward)
 
     return {
         "status": "success",
         "message": f"Successfully redeemed {reward.name}",
-        "remaining_stock": reward.stock
+        "remaining_stock": reward.stock,
+        "points_balance": balance.points_balance,
     }
 
 def auto_award_badges(db: Session, employee_name: str) -> list:

@@ -1,8 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Body
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import csv
+import io
 import asyncio
 import json
 
@@ -11,7 +15,8 @@ from .models import (
     EmissionFactor, ProductESGProfile, EnvironmentalGoal,
     ESGPolicy, Badge, Reward, CarbonTransaction, CSRActivity,
     EmployeeParticipation, Challenge, ChallengeParticipation,
-    PolicyAcknowledgement, Audit, ComplianceIssue, DepartmentScore
+    PolicyAcknowledgement, Audit, ComplianceIssue, DepartmentScore,
+    OrganizationSetting, EmployeeBalance, RewardRedemption
 )
 from .schemas import (
     DepartmentCreate, DepartmentResponse, CarbonTransactionCreate, CarbonTransactionResponse,
@@ -45,6 +50,12 @@ def startup_event():
     try:
         if db.query(Department).count() == 0:
             seed_database(db)
+        elif db.query(EmployeeBalance).filter(EmployeeBalance.employee_name == "Kashyap S.").first() is None:
+            db.add(EmployeeBalance(employee_name="Kashyap S.", xp_total=4820, points_balance=840))
+            activities = db.query(CSRActivity).limit(2).all()
+            for index, activity in enumerate(activities):
+                db.add(EmployeeParticipation(employee_name=["Aditi Rao", "Karan Shah"][index], activity_id=activity.id, proof_file="verified-evidence.pdf", approval_status="pending"))
+            db.commit()
     finally:
         db.close()
 
@@ -55,6 +66,14 @@ def startup_event():
 @app.get("/departments", response_model=list[DepartmentResponse])
 def get_departments(db: Session = Depends(get_db)):
     return db.query(Department).all()
+
+@app.get("/emission-factors")
+def get_emission_factors(db: Session = Depends(get_db)):
+    return db.query(EmissionFactor).all()
+
+@app.get("/environmental-goals")
+def get_environmental_goals(db: Session = Depends(get_db)):
+    return db.query(EnvironmentalGoal).all()
 
 @app.post("/departments", response_model=DepartmentResponse)
 def create_department(dept: DepartmentCreate, db: Session = Depends(get_db)):
@@ -107,6 +126,49 @@ def get_challenges(db: Session = Depends(get_db)):
 def get_csr_activities(db: Session = Depends(get_db)):
     return db.query(CSRActivity).all()
 
+@app.post("/csr-activities")
+def create_csr_activity(payload: dict = Body(...), db: Session = Depends(get_db)):
+    activity = CSRActivity(
+        name=payload.get("name", "New CSR activity"),
+        description=payload.get("description", "Employee sustainability activity"),
+        xp_reward=int(payload.get("xp_reward", 100)),
+        points_reward=int(payload.get("points_reward", 50)),
+    )
+    db.add(activity); db.commit(); db.refresh(activity)
+    return {"id": activity.id, "name": activity.name, "description": activity.description, "xp_reward": activity.xp_reward, "points_reward": activity.points_reward}
+
+@app.get("/participations")
+def get_participations(db: Session = Depends(get_db)):
+    return [{"id": p.id, "employee_name": p.employee_name, "activity_id": p.activity_id, "activity_name": p.activity.name if p.activity else "Activity", "proof_file": p.proof_file, "approval_status": p.approval_status, "points_earned": p.points_earned} for p in db.query(EmployeeParticipation).all()]
+
+@app.post("/participations")
+def join_activity(payload: dict = Body(...), db: Session = Depends(get_db)):
+    activity_id = int(payload.get("activity_id"))
+    employee = payload.get("employee_name", "Kashyap S.")
+    existing = db.query(EmployeeParticipation).filter(EmployeeParticipation.activity_id == activity_id, EmployeeParticipation.employee_name == employee).first()
+    if existing:
+        return {"id": existing.id, "status": existing.approval_status, "message": "Already joined"}
+    if not db.query(CSRActivity).filter(CSRActivity.id == activity_id).first():
+        raise HTTPException(404, "Activity not found")
+    part = EmployeeParticipation(employee_name=employee, activity_id=activity_id, proof_file=payload.get("proof_file", "self-declaration"), approval_status="pending")
+    db.add(part); db.commit(); db.refresh(part)
+    return {"id": part.id, "status": part.approval_status, "message": "Activity joined"}
+
+@app.patch("/participations/{participation_id}")
+def decide_participation(participation_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    try:
+        part = business_rules.approve_csr_participation(db, participation_id, payload.get("status", "approved"))
+        if part.approval_status == "approved":
+            balance = db.query(EmployeeBalance).filter(EmployeeBalance.employee_name == part.employee_name).first()
+            if not balance:
+                balance = EmployeeBalance(employee_name=part.employee_name, xp_total=0, points_balance=0); db.add(balance)
+            balance.points_balance += part.points_earned
+            balance.xp_total += (part.activity.xp_reward if part.activity else 100)
+            db.commit()
+        return {"id": part.id, "status": part.approval_status, "points_earned": part.points_earned}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
 @app.get("/compliance-issues", response_model=list[ComplianceIssueResponse])
 def get_compliance_issues(db: Session = Depends(get_db)):
     business_rules.check_and_flag_compliance_issues(db)
@@ -119,6 +181,65 @@ def create_compliance_issue(issue: ComplianceIssueCreate, db: Session = Depends(
     db.commit()
     db.refresh(db_issue)
     return db_issue
+
+@app.patch("/compliance-issues/{issue_id}")
+def update_compliance_issue(issue_id: int, payload: dict = Body(...), db: Session = Depends(get_db)):
+    issue = db.query(ComplianceIssue).filter(ComplianceIssue.id == issue_id).first()
+    if not issue: raise HTTPException(404, "Issue not found")
+    issue.status = payload.get("status", issue.status)
+    db.commit(); db.refresh(issue)
+    return issue
+
+@app.get("/policies")
+def get_policies(db: Session = Depends(get_db)):
+    return db.query(ESGPolicy).all()
+
+@app.get("/audits")
+def get_audits(db: Session = Depends(get_db)):
+    return db.query(Audit).all()
+
+@app.post("/audits")
+def create_audit(payload: dict = Body(...), db: Session = Depends(get_db)):
+    audit = Audit(title=payload.get("title", "New ESG audit"), auditor=payload.get("auditor", "Internal ESG team"), findings=payload.get("findings", "Audit scheduled; findings pending."))
+    db.add(audit); db.commit(); db.refresh(audit)
+    return {"id": audit.id, "title": audit.title, "auditor": audit.auditor, "findings": audit.findings}
+
+@app.get("/balance/{employee_name}")
+def get_balance(employee_name: str, db: Session = Depends(get_db)):
+    balance = db.query(EmployeeBalance).filter(EmployeeBalance.employee_name == employee_name).first()
+    if not balance:
+        balance = EmployeeBalance(employee_name=employee_name, xp_total=4820, points_balance=840)
+        db.add(balance); db.commit(); db.refresh(balance)
+    return {"employee_name": employee_name, "xp_total": balance.xp_total, "points_balance": balance.points_balance}
+
+@app.get("/settings")
+def get_settings(db: Session = Depends(get_db)):
+    defaults = {"auto": True, "csr": True, "badges": True, "email": False, "environmental_weight": 40, "social_weight": 30, "governance_weight": 30}
+    for setting in db.query(OrganizationSetting).all():
+        try: defaults[setting.key] = json.loads(setting.value)
+        except Exception: defaults[setting.key] = setting.value
+    return defaults
+
+@app.put("/settings")
+def save_settings(payload: dict = Body(...), db: Session = Depends(get_db)):
+    weights = [int(payload.get("environmental_weight", 40)), int(payload.get("social_weight", 30)), int(payload.get("governance_weight", 30))]
+    if sum(weights) != 100: raise HTTPException(400, "ESG weights must total 100%")
+    for key, value in payload.items():
+        setting = db.query(OrganizationSetting).filter(OrganizationSetting.key == key).first()
+        if not setting: setting = OrganizationSetting(key=key, value=json.dumps(value)); db.add(setting)
+        else: setting.value = json.dumps(value)
+    db.commit()
+    return {"status": "saved", **payload}
+
+@app.get("/reports/export")
+def export_report(report_type: str = "ESG Summary", db: Session = Depends(get_db)):
+    output = io.StringIO(); writer = csv.writer(output)
+    writer.writerow(["EcoSphere report", report_type]); writer.writerow(["Generated", datetime.utcnow().isoformat()]); writer.writerow([])
+    writer.writerow(["Department", "Environmental", "Social", "Governance", "Total"])
+    for score in db.query(DepartmentScore).all():
+        writer.writerow([score.department.name if score.department else score.department_id, score.environmental_score, score.social_score, score.governance_score, score.total_score])
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=ecosphere-report.csv"})
 
 @app.get("/forecast")
 def get_forecast(department_id: Optional[int] = None, days: int = 180, db: Session = Depends(get_db)):
@@ -187,6 +308,15 @@ def seed_database(db: Session):
         db.add(a)
     db.commit()
 
+    db.add(EmployeeParticipation(employee_name="Aditi Rao", activity_id=activities[0].id, proof_file="tree-plantation-proof.jpg", approval_status="pending"))
+    db.add(EmployeeParticipation(employee_name="Karan Shah", activity_id=activities[2].id, proof_file="training-certificate.pdf", approval_status="pending"))
+    db.add(EmployeeBalance(employee_name="Kashyap S.", xp_total=4820, points_balance=840))
+    db.add(EnvironmentalGoal(title="Reduce fleet emissions", target_value=500, current_value=390, deadline=datetime(2026, 12, 31), status="active"))
+    db.add(EnvironmentalGoal(title="Cut packaging waste", target_value=120, current_value=98, deadline=datetime(2026, 9, 30), status="at_risk"))
+    db.add(ESGPolicy(title="Environmental Commitment", content="Acme Industries commits to measurable, evidence-backed emissions reduction."))
+    db.add(ESGPolicy(title="Supplier Code of Conduct", content="Suppliers must meet environmental, labor, and governance requirements."))
+    db.commit()
+
     challenges = [
         Challenge(title="Zero Single-Use Plastics Week", category="Social", description="Avoid plastics.", xp=250, difficulty="Medium", evidence_required=True, deadline=datetime.utcnow() + timedelta(days=7), status="Active"),
         Challenge(title="EV Carpooling Initiative", category="Environmental", description="EV carpool.", xp=400, difficulty="Hard", evidence_required=True, deadline=datetime.utcnow() + timedelta(days=14), status="Active"),
@@ -253,3 +383,23 @@ def seed_database(db: Session):
     )
     db.add(issue)
     db.commit()
+
+# ==========================================
+# Frontend Static Files Serving
+# ==========================================
+import os
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+frontend_path = os.path.join(os.path.dirname(__file__), "../../frontend/dist")
+
+if os.path.isdir(frontend_path):
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_path, "assets")), name="assets")
+
+    @app.get("/")
+    @app.get("/{catchall:path}")
+    def serve_frontend(catchall: str = ""):
+        # Avoid intercepting API routes
+        if catchall.startswith("ws/") or catchall in ["departments", "carbon-transactions", "department-scores", "rewards", "challenges", "csr-activities", "compliance-issues", "forecast"]:
+            raise HTTPException(status_code=404)
+        return FileResponse(os.path.join(frontend_path, "index.html"))
