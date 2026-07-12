@@ -51,10 +51,10 @@ function App() {
       .then(res => res.json())
       .then(data => {
         // Transform backend forecast to chart format
-        const formatted = Object.keys(data.forecast).map((date, idx) => ({
-          month: date,
-          baseline: data.forecast[date],
-          projected: data.forecast[date] // will be modified by simulator later
+        const formatted = data.map((item) => ({
+          month: item.date,
+          baseline: item.emissions,
+          projected: item.emissions // will be modified by simulator later
         })).slice(0, 30); // Take first 30 days for readability
         setForecastData(formatted);
       })

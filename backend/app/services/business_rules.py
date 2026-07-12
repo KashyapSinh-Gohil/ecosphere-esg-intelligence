@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import datetime
 from ..models import (
     CarbonTransaction, EmissionFactor, EmployeeParticipation, 
@@ -170,11 +171,15 @@ def recalculate_department_scores(db: Session, department_id: int):
         score = DepartmentScore(department_id=department_id)
         db.add(score)
 
-    total_emissions = db.query(CarbonTransaction).filter(
+    total_emissions = db.query(func.sum(CarbonTransaction.calculated_co2e)).filter(
         CarbonTransaction.department_id == department_id
-    ).sum(CarbonTransaction.calculated_co2e) or 0.0
+    ).scalar() or 0.0
 
-    score.environmental_score = max(10.0, round(100.0 - (total_emissions / 5000.0), 1))
+    # Basic scoring logic
+    if total_emissions > 5000:
+        score.environmental_score = max(50.0, 100.0 - ((total_emissions - 5000) / 100))
+    else:
+        score.environmental_score = 90.0 + (5000 - total_emissions) / 500
 
     dept = db.query(Department).filter(Department.id == department_id).first()
     emp_count = dept.employee_count if dept else 10
