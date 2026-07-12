@@ -13,7 +13,7 @@ import {
 } from 'recharts';
 import './index.css';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:8000' : window.location.origin);
 const WS = API.replace(/^http/, 'ws');
 async function api(path, options = {}) {
   const response = await fetch(`${API}${path}`, {headers:{'Content-Type':'application/json', ...(options.headers||{})}, ...options});
@@ -55,8 +55,9 @@ function App() {
     window.addEventListener('online', on); window.addEventListener('offline', off);
     fetch(`${API}/department-scores`).then(r => r.ok ? r.json() : Promise.reject()).then(setScores).catch(() => {});
     fetch(`${API}/forecast`).then(r => r.ok ? r.json() : Promise.reject()).then(data => setForecast(data.slice(0,12).map((d,i) => ({ month: new Date(d.date).toLocaleDateString('en',{day:'2-digit',month:'short'}), baseline:d.emissions || forecastFallback[i]?.baseline })))).catch(() => {});
-    let ws; try { ws = new WebSocket(`${WS}/ws/telemetry`); ws.onmessage = e => { const d=JSON.parse(e.data); const value=[d.value,d.energy_kw,d.power_kw,d.power_usage].map(Number).find(Number.isFinite); if (value === undefined) return; setTelemetry(p => [...p,{time:new Date().toLocaleTimeString([],{minute:'2-digit',second:'2-digit'}),value}].slice(-18)); }; } catch { /* local demo fallback */ }
-    return () => { window.removeEventListener('online',on); window.removeEventListener('offline',off); ws?.close(); };
+    let ws; try { ws = new WebSocket(`${WS}/ws/telemetry`); ws.onmessage = e => { const d=JSON.parse(e.data); const value=[d.value,d.energy_kw,d.power_kw,d.power_usage].map(Number).find(Number.isFinite); if (value === undefined) return; setTelemetry(p => [...p,{time:new Date().toLocaleTimeString([],{minute:'2-digit',second:'2-digit'}),value}].slice(-18)); }; } catch { /* hosted fallback below */ }
+    const fallbackTimer=window.setInterval(()=>setTelemetry(p=>p.length?p:[...p,{time:new Date().toLocaleTimeString([],{minute:'2-digit',second:'2-digit'}),value:38+Math.random()*16}]),2500);
+    return () => { window.removeEventListener('online',on); window.removeEventListener('offline',off); ws?.close(); window.clearInterval(fallbackTimer); };
   }, []);
   useEffect(()=>{const handler=e=>notify(`${e.detail} opened`);window.addEventListener('ecosphere-action',handler);return()=>window.removeEventListener('ecosphere-action',handler)},[]);
 

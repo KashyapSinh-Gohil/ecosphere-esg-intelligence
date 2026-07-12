@@ -1,0 +1,32 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cd frontend && npm ci && npm run build",
+  "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/index.py": {
+      "runtime": "python3.12",
+      "includeFiles": "{backend/**,calculators/**,ecosphere_esg.db}"
+    }
+  },
+  "rewrites": [
+    { "source": "/departments", "destination": "/api/index.py" },
+    { "source": "/emission-factors", "destination": "/api/index.py" },
+    { "source": "/environmental-goals", "destination": "/api/index.py" },
+    { "source": "/carbon-transactions", "destination": "/api/index.py" },
+    { "source": "/department-scores", "destination": "/api/index.py" },
+    { "source": "/rewards/:path*", "destination": "/api/index.py" },
+    { "source": "/rewards", "destination": "/api/index.py" },
+    { "source": "/challenges", "destination": "/api/index.py" },
+    { "source": "/csr-activities", "destination": "/api/index.py" },
+    { "source": "/participations/:path*", "destination": "/api/index.py" },
+    { "source": "/participations", "destination": "/api/index.py" },
+    { "source": "/compliance-issues/:path*", "destination": "/api/index.py" },
+    { "source": "/compliance-issues", "destination": "/api/index.py" },
+    { "source": "/policies", "destination": "/api/index.py" },
+    { "source": "/audits", "destination": "/api/index.py" },
+    { "source": "/balance/:path*", "destination": "/api/index.py" },
+    { "source": "/settings", "destination": "/api/index.py" },
+    { "source": "/reports/:path*", "destination": "/api/index.py" },
+    { "source": "/forecast", "destination": "/api/index.py" }
+  ]
+}
