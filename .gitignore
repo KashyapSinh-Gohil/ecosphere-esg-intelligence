@@ -9,6 +9,7 @@ db.swp
 # Node / React Frontend
 node_modules/
 /dist
+frontend/dist/
 /build
 /.next
 /out
@@ -41,6 +42,11 @@ pip-delete-this-directory.txt
 # Local databases & testing
 *.db
 *.sqlite3
+design-reference.png
+design-implementation.png
+design-comparison.jpg
+design-qa.md
+.vercel/
 /data/clickhouse
 /data/timescale
 
