@@ -1,0 +1,10 @@
+[project]
+name = "ecosphere-esg-intelligence"
+version = "1.0.0"
+description = "Open-source ESG operations platform for the Odoo Hackathon"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.115.5",
+  "SQLAlchemy==2.0.44",
+  "pydantic==2.11.10",
+]
